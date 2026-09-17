@@ -4,32 +4,59 @@ function navier_stokes_solver()
     dx = 0.1; dy = 0.1; dz = 0.1; dt = 0.01;
     Nx = 21; Ny = 21; Nz = 21; Nt = 101;
 
-    % 상수
-    R_u = 8.31446261815324; %J/(mol*K) 일반기체상수
-    M = 0.0289647; %kg/mol 공기분자량
-    R = R_u/M; %J/(kg*K) 기체상수
-    mu0 = 1.716e-5; %Pa*s 점성계수
-    T0 = 273.15; %K 기준온도
-    S = 110.4; %K Sutherland 상수
-    Pr = 0.71; %프란틀 수
-    T_initial = 300; %K 초기온도
+    T_initial = 293.15; %K 초기온도 (20 °C)
     p = ones(Nx,Ny,Nz) * 101325; %Pa 초기압력
     T = ones(Nx,Ny,Nz) * T_initial; %K 초기온도
-    rho = p./(R*T); %kg/m^3 초기밀도
-    C_p = C_p(T); %J/(kg*K) 비열
+    properties = air_properties(T_initial, p(1));
+    rho = ones(Nx,Ny,Nz) * properties.rho; %kg/m^3 초기밀도
+    C_p = properties.Cp; %J/(kg*K) 비열
+    mu = properties.mu; %Pa*s 점성계수
+    k = properties.k; %W/(m*K) 열전도도
+    Pr = C_p * mu / k; %프란틀 수
 
-    % Sutherland 식으로 초기온도에서의 점성계수를 구한다.
-    mu = mu0 * (T_initial/T0)^(3/2) * (T0 + S)/(T_initial + S);
+    fprintf(['Initial air properties at %.2f K, %.0f Pa: Cp=%.3f J/(kg*K), ', ...
+        'rho=%.6f kg/m^3, mu=%.9g Pa*s, k=%.8g W/(m*K), Pr=%.5f\n'], ...
+        T_initial, p(1), C_p, properties.rho, mu, k, Pr);
 end
 
-function C_p = C_p(T)
-    % NASA CEA thermo.inp의 고정 조성 건조 공기(Air) 계수.
-    % 유효 온도 범위는 300~6000 K이다.
-    if T < 300.0 || T > 6000.0
-        error('navier_stokes_solver:TemperatureOutOfRange', ...
-            'Temperature must be between 300 K and 6000 K.');
+function properties = air_properties(T, P)
+    % 건조 공기 물성. CoolProp은 200~2000 K에 사용한다.
+    % 2000~6000 K에서는 NASA CEA Air 계수와 기존 근사식을 사용한다.
+    if ~isscalar(T) || ~isscalar(P) || ~isfinite(T) || ~isfinite(P)
+        error('navier_stokes_solver:InvalidState', ...
+            'Temperature and pressure must be finite scalar values.');
     end
 
+    if T < 200.0 || T > 6000.0
+        error('navier_stokes_solver:TemperatureOutOfRange', ...
+            'Temperature must be between 200 K and 6000 K.');
+    end
+
+    if T <= 2000.0
+        coolprop = coolprop_module();
+        properties.Cp = double(coolprop.PropsSI('Cpmass', 'T', T, 'P', P, 'Air'));
+        properties.rho = double(coolprop.PropsSI('Dmass', 'T', T, 'P', P, 'Air'));
+        properties.mu = double(coolprop.PropsSI('V', 'T', T, 'P', P, 'Air'));
+        properties.k = double(coolprop.PropsSI('L', 'T', T, 'P', P, 'Air'));
+        return;
+    end
+
+    % CoolProp Air의 상한(2000 K) 밖: NASA CEA Air Cp를 사용한다.
+    % 이 고온 근사는 기존 솔버의 이상기체/Sutherland 가정을 유지한다.
+    R_universal = 8314.46261815324; % J/(kmol*K)
+    molecular_weight = 28.9651159; % kg/kmol
+    R = R_universal / molecular_weight;
+    T0 = 273.15; % K
+    S = 110.4; % K
+    mu0 = 1.716e-5; % Pa*s
+    properties.Cp = nasa_cea_air_cp(T);
+    properties.rho = P / (R * T);
+    properties.mu = mu0 * (T/T0)^(3/2) * (T0 + S)/(T + S);
+    properties.k = properties.Cp * properties.mu / 0.71;
+end
+
+function cp = nasa_cea_air_cp(T)
+    % NASA CEA thermo.inp의 고정 조성 건조 공기(Air) Cp 계수: 300~6000 K.
     if T <= 1000.0
         coefficients = [ ...
             1.009950160e4, -1.968275610e2, 5.009155110, ...
@@ -45,6 +72,49 @@ function C_p = C_p(T)
     exponents = [-2, -1, 0, 1, 2, 3, 4];
     molecular_weight = 28.9651159; % kg/kmol
     R_universal = 8314.46261815324; % J/(kmol*K)
-    C_p = (R_universal / molecular_weight) * ...
+    cp = (R_universal / molecular_weight) * ...
         sum(coefficients .* T.^exponents);
+end
+
+function coolprop = coolprop_module()
+    % prerne_rs/.vendor에 설치한 프로젝트 전용 CoolProp을 MATLAB에 연결한다.
+    persistent module
+    if ~isempty(module)
+        coolprop = module;
+        return;
+    end
+
+    source_dir = fileparts(mfilename('fullpath'));
+    vendor_dir = fullfile(source_dir, '.vendor');
+    python_executable = fullfile(fileparts(source_dir), '.venv', 'bin', 'python');
+    if ~isfolder(vendor_dir)
+        error('navier_stokes_solver:CoolPropMissing', ...
+            'CoolProp is missing. Install it in %s.', vendor_dir);
+    end
+    if ~isfile(python_executable)
+        error('navier_stokes_solver:PythonMissing', ...
+            'The project Python environment is missing: %s', python_executable);
+    end
+
+    environment = pyenv;
+    if string(environment.Status) == "NotLoaded"
+        pyenv('Version', python_executable);
+    elseif string(environment.Version) ~= string(python_executable)
+        error('navier_stokes_solver:WrongPython', ...
+            ['MATLAB already loaded Python from %s. Restart MATLAB, then run ', ...
+             'navier_stokes_solver before using Python elsewhere.'], ...
+            string(environment.Version));
+    end
+
+    if int64(py.sys.path.count(vendor_dir)) == 0
+        insert(py.sys.path, int32(0), vendor_dir);
+    end
+
+    try
+        module = py.importlib.import_module('CoolProp.CoolProp');
+    catch exception
+        error('navier_stokes_solver:CoolPropImportFailed', ...
+            'Could not import CoolProp from %s: %s', vendor_dir, exception.message);
+    end
+    coolprop = module;
 end
