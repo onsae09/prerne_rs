@@ -3,6 +3,6 @@ import matlab.engine
 
 eng = matlab.engine.start_matlab()
 temp = int(input("Enter the temperature in Kelvin: "))
-cp = cp_air(temp)
+C_p = cp_air(temp)
 
-eng.calculate(cp, nargout=0)  # Call the MATLAB function with cp as an argument
+eng.navier_stokes_solver(C_p, nargout=0)  # Call the MATLAB function with cp as an argument

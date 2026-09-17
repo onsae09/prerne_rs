@@ -1,6 +1,6 @@
-clear; clc; close all;
-
 function navier_stokes_solver(C_p)
+    clear; clc; close all;
+
     % 초깃값
     dx = 0.1; dy = 0.1; dz = 0.1; dt = 0.01;
     Nx = 21; Ny = 21; Nz = 21; Nt = 101;
