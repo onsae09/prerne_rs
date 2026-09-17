@@ -1,11 +1,16 @@
-function navier_stokes_solver(C_p)
-    clear; clc; close all;
+function result = navier_stokes_solver(C_p, T_initial)
+    %NAVIER_STOKES_SOLVER Initialize a 3-D thermo-fluid calculation.
+    % C_p is supplied by Python in J/(kg*K). It is used in the energy
+    % equation through k = mu*C_p/Pr and alpha = k/(rho*C_p).
+
+    arguments
+        C_p (1,1) double {mustBeFinite, mustBePositive}
+        T_initial (1,1) double {mustBeFinite, mustBePositive} = 300.0
+    end
 
     % 초깃값
     dx = 0.1; dy = 0.1; dz = 0.1; dt = 0.01;
     Nx = 21; Ny = 21; Nz = 21; Nt = 101;
-    Lx = dx*(Nx-1); Ly = dy*(Ny-1); Lz = dz*(Nz-1); Lt = dt*(Nt-1);
-    x = 0:dx:(Nx-1)*dx; y = 0:dy:(Ny-1)*dy; z = 0:dz:(Nz-1)*dz; t = 0:dt:(Nt-1)*dt;
 
     % 상수
     R_u = 8.31446261815324; %J/(mol*K) 일반기체상수
@@ -15,16 +20,48 @@ function navier_stokes_solver(C_p)
     T0 = 273.15; %K 기준온도
     S = 110.4; %K Sutherland 상수
     Pr = 0.71; %프란틀 수
-    G = 6.67430e-11; %m^3/(kg*s^2) 중력상수
-    m = 5.972e24; %kg 지구질량
-    r0 = [-Lx/2 6.371e6 -Lz/2]; %[m m m] 기준 위치벡터
-
-    % 변수
-    rho = ones(Nx,Ny,Nz) * 1.225; %kg/m^3 초기밀도
-    u = zeros(Nx,Ny,Nz,3); %m/s 초기속도벡터
+    % 이상기체식으로 초기 밀도를 계산한다.
     p = ones(Nx,Ny,Nz) * 101325; %Pa 초기압력
-    T = p./(rho*R); %K 초기온도
+    T = ones(Nx,Ny,Nz) * T_initial; %K 초기온도
+    rho = p./(R*T); %kg/m^3 초기밀도
 
-    C_p
-    
+    % Sutherland 식으로 초기온도에서의 점성계수를 구한다.
+    mu = mu0 * (T_initial/T0)^(3/2) * (T0 + S)/(T_initial + S);
+
+    % Python에서 전달된 C_p가 실제로 사용되는 부분이다.
+    k = mu * C_p / Pr;          % W/(m*K), 열전도율
+    alpha = k ./ (rho .* C_p);  % m^2/s, 열확산계수
+
+    % 에너지 방정식의 열전도 항을 계산한다. 예제로 x=0 면을 초기
+    % 온도보다 50 K 높은 벽으로 두고 내부 온도장을 시간 적분한다.
+    T_hot = T_initial + 50.0;
+    T(1,:,:) = T_hot;
+
+    for n = 2:Nt
+        T_old = T;
+        laplacian_T = ...
+            (T_old(3:Nx,2:Ny-1,2:Nz-1) - 2*T_old(2:Nx-1,2:Ny-1,2:Nz-1) + T_old(1:Nx-2,2:Ny-1,2:Nz-1))/dx^2 + ...
+            (T_old(2:Nx-1,3:Ny,2:Nz-1) - 2*T_old(2:Nx-1,2:Ny-1,2:Nz-1) + T_old(2:Nx-1,1:Ny-2,2:Nz-1))/dy^2 + ...
+            (T_old(2:Nx-1,2:Ny-1,3:Nz) - 2*T_old(2:Nx-1,2:Ny-1,2:Nz-1) + T_old(2:Nx-1,2:Ny-1,1:Nz-2))/dz^2;
+
+        % rho*C_p*dT/dt = k*nabla^2(T)
+        T(2:Nx-1,2:Ny-1,2:Nz-1) = T_old(2:Nx-1,2:Ny-1,2:Nz-1) + ...
+            dt * (k ./ (rho(2:Nx-1,2:Ny-1,2:Nz-1) .* C_p)) .* laplacian_T;
+
+        % 단열(영 법선 온도구배) 경계와 고온 벽 경계조건
+        T(Nx,:,:) = T(Nx-1,:,:);
+        T(:,1,:) = T(:,2,:);
+        T(:,Ny,:) = T(:,Ny-1,:);
+        T(:,:,1) = T(:,:,2);
+        T(:,:,Nz) = T(:,:,Nz-1);
+        T(1,:,:) = T_hot;
+    end
+
+    result = struct( ...
+        'C_p', C_p, ...
+        'mu', mu, ...
+        'k', k, ...
+        'alpha', mean(alpha, 'all'), ...
+        'mean_temperature', mean(T, 'all'), ...
+        'temperature', T);
 end
