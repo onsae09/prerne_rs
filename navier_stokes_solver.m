@@ -1,84 +1,244 @@
-% 초깃값
-dx = 0.1; dy = 0.1; dz = 0.1; dt = 0.01;
-Nx = 20; Ny = 20; Nz = 20; Nt = 100;
+% ============================================================
+% Initial conditions
+% ============================================================
 
-T_initial = 303.0; % K 초기온도 (30 °C)
-p = ones(Nx,Ny,Nz) * 101325; % Pa 초기압력 (3D 텐서)
-T = ones(Nx,Ny,Nz) * T_initial; % K 초기온도 (3D 텐서)
+dx = 0.1;
+dy = 0.1;
+dz = 0.1;
+dt = 0.01;
 
-% 3D 텐서를 직접 입력
-properties = air_properties(T, p);
+Nx = 20;
+Ny = 20;
+Nz = 20;
+Nt = 100;
 
-rho = properties.rho % kg/m^3 (3D 텐서)
-C_p = properties.Cp;  % J/(kg*K) (3D 텐서)
-mu  = properties.mu;  % Pa*s (3D 텐서)
-k   = properties.k;   % W/(m*K) (3D 텐서)
-Pr  = C_p .* mu ./ k; % 프란틀 수 (3D 텐서 요소별 연산)
+T_initial = 303.0;      % K
+p_initial = 101325.0;   % Pa
 
-function properties = air_properties(T, P)
-    % 건조 공기 물성치 계산 (스칼라 및 3D 텐서 지원)
-    if any(T(:) < 200.0) || any(T(:) > 2000.0)
-        error('navier_stokes_solver:TemperatureOutOfRange', ...
-            'Temperature must be between 200 K and 2000 K.');
+T = ones(Nx, Ny, Nz) * T_initial;
+p = ones(Nx, Ny, Nz) * p_initial;
+
+
+% ============================================================
+% Air properties
+% ============================================================
+
+properties = air_properties_fast(T, p);
+
+rho = properties.rho;   % kg/m^3
+C_p = properties.Cp;    % J/(kg*K)
+mu  = properties.mu;    % Pa*s
+k   = properties.k;     % W/(m*K)
+Pr  = properties.Pr;    % dimensionless
+
+
+% ============================================================
+% Fast air property calculation
+% ============================================================
+
+function properties = air_properties_fast(T, P)
+
+    % --------------------------------------------------------
+    % Input checks
+    % --------------------------------------------------------
+
+    if ~isequal(size(T), size(P))
+        error('T and P must have the same size.');
     end
 
-    % 입력이 배열/텐서인 경우: 1차원 변환 후 일괄 계산 및 Reshape
-    grid_size = size(T);
-    
-    % MATLAB 1차원 배열 -> NumPy 배열 전달로 속도 최적화
-    T_np = py.numpy.array(T(:)');
-    P_np = py.numpy.array(P(:)');
-
-    properties.Cp  = coolprop_array('Cpmass', T_np, P_np, grid_size);
-    properties.rho = coolprop_array('Dmass',  T_np, P_np, grid_size);
-    properties.mu  = coolprop_array('V',      T_np, P_np, grid_size);
-    properties.k   = coolprop_array('L',      T_np, P_np, grid_size);
-end
-
-function value_3d = coolprop_array(property_name, T_np, P_np, grid_size)
-    coolprop_setup();
-    try
-        % CoolProp C++ 엔진으로 일괄 연산 실행
-        result_np = py.CoolProp.CoolProp.PropsSI(property_name, 'T', T_np, 'P', P_np, 'Air');
-        
-        % 파이썬 결과를 double로 변환 후 원래 3D 격자 모양으로 복원
-        value_3d = reshape(double(result_np), grid_size);
-    catch exception
-        error('navier_stokes_solver:CoolPropCalculationFailed', ...
-            'CoolProp failed for %s: %s', property_name, exception.message);
-    end
-end
-
-function coolprop_setup()
-    persistent initialized
-    if ~isempty(initialized) && initialized
-        return;
+    if any(T(:) < 200.0) || any(T(:) > 400.0)
+        error('Temperature must be between 200 K and 400 K.');
     end
 
-    source_dir = fileparts(mfilename('fullpath'));
-    
-    if ispc
-        python_executable = fullfile(fileparts(source_dir), '.venv', 'Scripts', 'python.exe');
-    else
-        python_executable = fullfile(fileparts(source_dir), '.venv', 'bin', 'python');
+    if any(P(:) <= 0)
+        error('Pressure must be positive.');
     end
 
-    if ~isfile(python_executable)
-        error('navier_stokes_solver:PythonMissing', ...
-            'The project Python environment is missing: %s', python_executable);
-    end
 
-    environment = pyenv;
-    if string(environment.Status) == "NotLoaded"
-        pyenv('Version', python_executable, 'ExecutionMode', 'InProcess');
-    end
+    % --------------------------------------------------------
+    % Constants
+    % --------------------------------------------------------
 
-    try
-        py.importlib.import_module('CoolProp.CoolProp');
-        py.importlib.import_module('numpy');
-    catch exception
-        error('navier_stokes_solver:CoolPropImportFailed', ...
-            'Could not import CoolProp or NumPy from the project venv: %s', exception.message);
-    end
-    initialized = true;
+    R_u = 8.31446261815324;   % J/(mol*K)
+
+    % Molar masses [kg/mol]
+    M_N2 = 28.0134e-3;
+    M_O2 = 31.9988e-3;
+    M_Ar = 39.948e-3;
+
+
+    % --------------------------------------------------------
+    % Dry-air composition
+    %
+    % Mole fractions
+    % --------------------------------------------------------
+
+    x_N2 = 0.78084;
+    x_O2 = 0.20946;
+    x_Ar = 0.00934;
+
+    % Normalize because trace gases such as CO2 are omitted
+    x_sum = x_N2 + x_O2 + x_Ar;
+
+    x_N2 = x_N2 / x_sum;
+    x_O2 = x_O2 / x_sum;
+    x_Ar = x_Ar / x_sum;
+
+
+    % --------------------------------------------------------
+    % Mixture molar mass
+    % --------------------------------------------------------
+
+    M_air = ...
+          x_N2 * M_N2 ...
+        + x_O2 * M_O2 ...
+        + x_Ar * M_Ar;
+
+    R_air = R_u / M_air;
+
+
+    % --------------------------------------------------------
+    % Density
+    %
+    % Ideal gas equation
+    %
+    % rho = P / (R_air * T)
+    % --------------------------------------------------------
+
+    rho = P ./ (R_air .* T);
+
+
+    % --------------------------------------------------------
+    % Cp using NASA9 polynomial
+    %
+    % Cp/R =
+    % a1/T^2 + a2/T + a3
+    % + a4*T + a5*T^2 + a6*T^3 + a7*T^4
+    %
+    % Valid here for 200 K <= T <= 1000 K
+    % --------------------------------------------------------
+
+
+    % N2, NASA9, 200-1000 K
+    N2 = [ ...
+         2.210371497e4, ...
+        -3.818461820e2, ...
+         6.082738360, ...
+        -8.530914410e-3, ...
+         1.384646189e-5, ...
+        -9.625793620e-9, ...
+         2.519705809e-12];
+
+
+    % O2, NASA9, 200-1000 K
+    O2 = [ ...
+        -3.425563420e4, ...
+         4.847000970e2, ...
+         1.119010961, ...
+         4.293889240e-3, ...
+        -6.836300520e-7, ...
+        -2.023372700e-9, ...
+         1.039040018e-12];
+
+
+    % --------------------------------------------------------
+    % Precompute temperature terms
+    % --------------------------------------------------------
+
+    invT  = 1.0 ./ T;
+    invT2 = invT .* invT;
+
+    T2 = T .* T;
+    T3 = T2 .* T;
+    T4 = T2 .* T2;
+
+
+    % --------------------------------------------------------
+    % Dimensionless Cp/R
+    % --------------------------------------------------------
+
+    CpR_N2 = ...
+          N2(1) .* invT2 ...
+        + N2(2) .* invT ...
+        + N2(3) ...
+        + N2(4) .* T ...
+        + N2(5) .* T2 ...
+        + N2(6) .* T3 ...
+        + N2(7) .* T4;
+
+
+    CpR_O2 = ...
+          O2(1) .* invT2 ...
+        + O2(2) .* invT ...
+        + O2(3) ...
+        + O2(4) .* T ...
+        + O2(5) .* T2 ...
+        + O2(6) .* T3 ...
+        + O2(7) .* T4;
+
+
+    % Argon: monatomic ideal gas
+    CpR_Ar = 2.5;
+
+
+    % --------------------------------------------------------
+    % Mixture molar Cp
+    % --------------------------------------------------------
+
+    Cp_molar = R_u .* ( ...
+          x_N2 .* CpR_N2 ...
+        + x_O2 .* CpR_O2 ...
+        + x_Ar .* CpR_Ar);
+
+
+    % --------------------------------------------------------
+    % Mass-specific Cp
+    % --------------------------------------------------------
+
+    Cp = Cp_molar ./ M_air;
+
+
+    % --------------------------------------------------------
+    % Dynamic viscosity
+    %
+    % Sutherland equation
+    % --------------------------------------------------------
+
+    T_ref  = 273.15;
+    mu_ref = 1.716e-5;
+    S      = 111.0;
+
+    mu = mu_ref .* ...
+        (T ./ T_ref).^1.5 .* ...
+        ((T_ref + S) ./ (T + S));
+
+
+    % --------------------------------------------------------
+    % Prandtl number approximation
+    %
+    % Good approximation around this temperature range
+    % --------------------------------------------------------
+
+    Pr = 0.71;
+
+
+    % --------------------------------------------------------
+    % Thermal conductivity
+    %
+    % k = Cp * mu / Pr
+    % --------------------------------------------------------
+
+    k = Cp .* mu ./ Pr;
+
+
+    % --------------------------------------------------------
+    % Output
+    % --------------------------------------------------------
+
+    properties.rho = rho;
+    properties.Cp  = Cp;
+    properties.mu  = mu;
+    properties.k   = k;
+    properties.Pr  = Pr;
+
 end
