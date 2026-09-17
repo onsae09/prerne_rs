@@ -28,16 +28,20 @@ T_initial = 303.0; % K
 p_initial = 101325.0; % Pa
 
 % 변수 초기화
+r = [0 0 0];
 T = ones(Nx+2, Ny+2, Nz+2) * T_initial;
 p = ones(Nx+2, Ny+2, Nz+2) * p_initial;
 rho = p ./ (R .* T);
-
 [C_p, h] = air_properties(T, A_air, R);
-
 e = h - R .* T;
 E = rho .* (e + 0.5 .* sum(u.^2, 4));
-
-r = [0 0 0];
+gamma = C_p ./ (C_p - R);
+mu = mu0 * (T / T0).^(3/2) .* (T0 + S) ./ (T + S);
+kappa = 0;
+lambda = kappa - 2/3 * mu;
+tau = mu .* (gradient(u, dx, dy, dz) + permute(gradient(u, dx, dy, dz), [1 2 3 5 4])) + lambda .* divergence(u, dx, dy, dz) .* eye(3);
+k = mu * C_p / Pr;
+q = -k * gradient(T, dx, dy, dz);
 g = -G * m * (r + r0) ./ vecnorm(r + r0, 2, 2).^3;
 
 function [A_air] = cal_A(x_species)
