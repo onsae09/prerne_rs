@@ -4,28 +4,30 @@ function navier_stokes_solver()
     dx = 0.1; dy = 0.1; dz = 0.1; dt = 0.01;
     Nx = 21; Ny = 21; Nz = 21; Nt = 101;
 
-    % 상수
-    R_u = 8.31446261815324; %J/(mol*K) 일반기체상수
-    M = 0.0289647; %kg/mol 공기분자량
-    R = R_u/M; %J/(kg*K) 기체상수
-    mu0 = 1.716e-5; %Pa*s 점성계수
-    T0 = 273.15; %K 기준온도
-    S = 110.4; %K Sutherland 상수
-    Pr = 0.71; %프란틀 수
-    T_initial = 300; %K 초기온도
+    T_initial = 293.15; %K 초기온도 (20 °C)
     p = ones(Nx,Ny,Nz) * 101325; %Pa 초기압력
     T = ones(Nx,Ny,Nz) * T_initial; %K 초기온도
-    rho = p./(R*T); %kg/m^3 초기밀도
-    C_p = C_p(T); %J/(kg*K) 비열
+    properties = air_properties(T_initial, p(1));
+    rho = ones(Nx,Ny,Nz) * properties.rho; %kg/m^3 초기밀도
+    C_p = properties.Cp; %J/(kg*K) 비열
+    mu = properties.mu; %Pa*s 점성계수
+    k = properties.k; %W/(m*K) 열전도도
+    Pr = C_p * mu / k; %프란틀 수
 
-    % Sutherland 식으로 초기온도에서의 점성계수를 구한다.
-    mu = mu0 * (T_initial/T0)^(3/2) * (T0 + S)/(T_initial + S);
+    fprintf(['Initial air properties at %.2f K, %.0f Pa: Cp=%.3f J/(kg*K), ', ...
+        'rho=%.6f kg/m^3, mu=%.9g Pa*s, k=%.8g W/(m*K), Pr=%.5f\n'], ...
+        T_initial, p(1), C_p, properties.rho, mu, k, Pr);
 end
 
-function C_p = C_p(T)
-    % NASA CEA thermo.inp의 고정 조성 건조 공기(Air) 계수.
-    % 유효 온도 범위는 300~6000 K이다.
-    if T < 300.0 || T > 6000.0
+function properties = air_properties(T, P)
+    % 건조 공기 물성. CoolProp은 200~2000 K에 사용한다.
+    % 2000~6000 K에서는 NASA CEA Air 계수와 기존 근사식을 사용한다.
+    if ~isscalar(T) || ~isscalar(P) || ~isfinite(T) || ~isfinite(P)
+        error('navier_stokes_solver:InvalidState', ...
+            'Temperature and pressure must be finite scalar values.');
+    end
+
+    if T < 200.0 || T > 6000.0
         error('navier_stokes_solver:TemperatureOutOfRange', ...
             'Temperature must be between 200 K and 6000 K.');
     end
