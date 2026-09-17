@@ -1,11 +1,10 @@
-% ============================================================
-% Initial conditions
-% ============================================================
+clear; clc; close all;
 
+% 유한차분
 dx = 0.1; dy = 0.1; dz = 0.1; dt = 0.01;
 Nx = 20; Ny = 20; Nz = 20; Nt = 100;
 Lx = dx*Nx; Ly = dy*Ny; Lz = dz*Nz; Lt = dt*Nt;
-x = 0:dx:Lx; y = 0:dy:Ly; z = 0:dz:Lz; t = 0:dt:Lt; % m
+x = dx:dx:Lx; y = dy:dy:Ly; z = dz:dz:Lz; t = dt:dt:Lt; % m
 
 % 상수
 R_u = 8.31446261815324; %J/(mol*K) 일반기체상수
@@ -19,16 +18,20 @@ G = 6.67430e-11; %m^3/(kg*s^2) 중력상수
 m = 5.972e24; %kg 지구질량
 r0 = [-Lx/2 6.371e6 -Lz/2]; %[m m m] 기준 위치벡터
 
+% 초기 설정값
+u = zeros(Nx+2, Ny+2, Nz+2, 3); % m/s
 T_initial = 303.0;      % K
 p_initial = 101325.0;   % Pa
 
-u = zeros(Nx+2, Ny+2, Nz+2, 3); % m/s
+% 변수 초기화
 T = ones(Nx+2, Ny+2, Nz+2) * T_initial;
 p = ones(Nx+2, Ny+2, Nz+2) * p_initial;
 rho = p ./ (R * T); % kg/m^3
 C_p = cp(T, p); % J/(kg*K)
 gamma = C_p ./ (C_p - R);
 E = p ./ (gamma - 1) + 0.5 * rho .* sum(u.^2, 4); % J/m^3
+r = [0 0 0]; % m
+g = -G * m * (r + r0) ./ vecnorm(r + r0, 2, 2).^3; % m/s^2
 
 function Cp_R = cp(T, P)
 
