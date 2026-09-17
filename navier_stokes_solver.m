@@ -1,6 +1,6 @@
 clear; clc; close all;
 
-function [C_p] = calculate()
+function navier_stokes_solver(C_p)
     % 초깃값
     dx = 0.1; dy = 0.1; dz = 0.1; dt = 0.01;
     Nx = 21; Ny = 21; Nz = 21; Nt = 101;
@@ -24,4 +24,7 @@ function [C_p] = calculate()
     u = zeros(Nx,Ny,Nz,3); %m/s 초기속도벡터
     p = ones(Nx,Ny,Nz) * 101325; %Pa 초기압력
     T = p./(rho*R); %K 초기온도
+
+    C_p
+    
 end
