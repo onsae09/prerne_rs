@@ -7,13 +7,12 @@
 
 ## 1. 필요한 폴더 구조
 
-솔버는 저장소의 부모 폴더에 있는 `.venv`와 저장소 내부의 `.vendor`를 사용한다.
+솔버는 저장소의 부모 폴더에 있는 `.venv`를 사용한다.
 
 ```text
 prerne/
 ├── .venv/
 └── prerne_rs/
-    ├── .vendor/
     └── navier_stokes_solver.m
 ```
 
@@ -26,6 +25,7 @@ prerne/
 cd /path/to/prerne
 python3.11 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install CoolProp==8.0.0
 ```
 
 Python 버전을 확인한다.
@@ -40,18 +40,10 @@ Python 버전을 확인한다.
 Python 3.11.x
 ```
 
-## 3. CoolProp 설치
-
-CoolProp은 저장소 내부의 `.vendor`에 프로젝트 전용으로 설치한다.
+## 3. 설치 확인
 
 ```bash
-.venv/bin/python -m pip install --target prerne_rs/.vendor CoolProp==8.0.0
-```
-
-설치를 확인한다.
-
-```bash
-.venv/bin/python -c "import sys; sys.path.insert(0, 'prerne_rs/.vendor'); from CoolProp.CoolProp import PropsSI; print(PropsSI('Cpmass', 'T', 293.15, 'P', 101325, 'Air'))"
+.venv/bin/python -c "from CoolProp.CoolProp import PropsSI; print(PropsSI('Cpmass', 'T', 293.15, 'P', 101325, 'Air'))"
 ```
 
 약 `1006.144`가 출력되면 정상이다.
@@ -83,13 +75,17 @@ Initial air properties at 293.15 K, 101325 Pa: Cp=1006.144 J/(kg*K), rho=1.20457
 
 ### `No module named 'CoolProp'`
 
-설치 위치와 파일 존재 여부를 확인한다.
+가상환경에 CoolProp이 설치됐는지 확인한다.
 
 ```bash
-ls prerne_rs/.vendor/CoolProp
+.venv/bin/python -m pip show CoolProp
 ```
 
-없다면 3단계의 설치 명령을 다시 실행한다.
+없다면 다음 명령으로 설치한다.
+
+```bash
+.venv/bin/python -m pip install CoolProp==8.0.0
+```
 
 ### MATLAB이 다른 Python을 이미 로드한 경우
 
@@ -127,4 +123,3 @@ navier_stokes_solver
 - 200~2000 K: CoolProp `Air` 모델로 `Cp`, 밀도, 점도, 열전도도 계산
 - 2000~6000 K: NASA CEA `Air` 계수와 기존 고온 근사 사용
 - 200 K 미만 또는 6000 K 초과: 범위 오류 발생
-

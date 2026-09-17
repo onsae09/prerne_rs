@@ -99,12 +99,7 @@ function coolprop_setup()
     end
 
     source_dir = fileparts(mfilename('fullpath'));
-    vendor_dir = fullfile(source_dir, '.vendor');
     python_executable = fullfile(fileparts(source_dir), '.venv', 'bin', 'python');
-    if ~isfolder(vendor_dir)
-        error('navier_stokes_solver:CoolPropMissing', ...
-            'CoolProp is missing. Install it in %s.', vendor_dir);
-    end
     if ~isfile(python_executable)
         error('navier_stokes_solver:PythonMissing', ...
             'The project Python environment is missing: %s', python_executable);
@@ -115,16 +110,11 @@ function coolprop_setup()
         pyenv('Version', python_executable);
     end
 
-    % 프로젝트 전용 CoolProp 패키지를 Python 검색 경로에 둔다.
-    if int64(py.sys.path().count(vendor_dir)) == 0
-        py.sys.path().insert(int32(0), vendor_dir);
-    end
-
     try
         pyrun("from CoolProp.CoolProp import PropsSI");
     catch exception
         error('navier_stokes_solver:CoolPropImportFailed', ...
-            'Could not import CoolProp from %s: %s', vendor_dir, exception.message);
+            'Could not import CoolProp from the project venv: %s', exception.message);
     end
     initialized = true;
 end
