@@ -33,14 +33,10 @@ E = p ./ (gamma - 1) + 0.5 * rho .* sum(u.^2, 4); % J/m^3
 r = [0 0 0]; % m
 g = -G * m * (r + r0) ./ vecnorm(r + r0, 2, 2).^3; % m/s^2
 
-function Cp_R = cp(T, P)
+function Cp_R = cp(T)
 
     if any(T(:) < 200.0) || any(T(:) > 400.0)
         error('Temperature must be between 200 K and 400 K.');
-    end
-
-    if any(P(:) <= 0)
-        error('Pressure must be positive.');
     end
 
     % Molar masses [kg/mol]
