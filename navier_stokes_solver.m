@@ -33,11 +33,10 @@ function properties = air_properties(T, P)
     end
 
     if T <= 2000.0
-        coolprop = coolprop_module();
-        properties.Cp = double(coolprop.PropsSI('Cpmass', 'T', T, 'P', P, 'Air'));
-        properties.rho = double(coolprop.PropsSI('Dmass', 'T', T, 'P', P, 'Air'));
-        properties.mu = double(coolprop.PropsSI('V', 'T', T, 'P', P, 'Air'));
-        properties.k = double(coolprop.PropsSI('L', 'T', T, 'P', P, 'Air'));
+        properties.Cp = coolprop_value('Cpmass', T, P);
+        properties.rho = coolprop_value('Dmass', T, P);
+        properties.mu = coolprop_value('V', T, P);
+        properties.k = coolprop_value('L', T, P);
         return;
     end
 
@@ -76,11 +75,26 @@ function cp = nasa_cea_air_cp(T)
         sum(coefficients .* T.^exponents);
 end
 
-function coolprop = coolprop_module()
-    % prerne_rs/.vendor에 설치한 프로젝트 전용 CoolProp을 MATLAB에 연결한다.
-    persistent module
-    if ~isempty(module)
-        coolprop = module;
+function value = coolprop_value(property_name, T, P)
+    % CoolProp 8의 nanobind 함수를 MATLAB에서 직접 호출하지 않고,
+    % Python 내부에서 실행한 뒤 표준 float 값만 MATLAB으로 가져온다.
+    coolprop_setup();
+    code = sprintf([ ...
+        'from CoolProp.CoolProp import PropsSI\n', ...
+        'result = float(PropsSI(''%s'', ''T'', %.17g, ''P'', %.17g, ''Air''))'], ...
+        property_name, T, P);
+    try
+        value = double(pyrun(code, "result"));
+    catch exception
+        error('navier_stokes_solver:CoolPropCalculationFailed', ...
+            'CoolProp failed for %s at T=%g K, P=%g Pa: %s', ...
+            property_name, T, P, exception.message);
+    end
+end
+
+function coolprop_setup()
+    persistent initialized
+    if ~isempty(initialized) && initialized
         return;
     end
 
@@ -99,22 +113,18 @@ function coolprop = coolprop_module()
     environment = pyenv;
     if string(environment.Status) == "NotLoaded"
         pyenv('Version', python_executable);
-    elseif string(environment.Version) ~= string(python_executable)
-        error('navier_stokes_solver:WrongPython', ...
-            ['MATLAB already loaded Python from %s. Restart MATLAB, then run ', ...
-             'navier_stokes_solver before using Python elsewhere.'], ...
-            string(environment.Version));
     end
 
-    if int64(py.sys.path.count(vendor_dir)) == 0
-        insert(py.sys.path, int32(0), vendor_dir);
+    % 프로젝트 전용 CoolProp 패키지를 Python 검색 경로에 둔다.
+    if int64(py.sys.path().count(vendor_dir)) == 0
+        py.sys.path().insert(int32(0), vendor_dir);
     end
 
     try
-        module = py.importlib.import_module('CoolProp.CoolProp');
+        pyrun("from CoolProp.CoolProp import PropsSI");
     catch exception
         error('navier_stokes_solver:CoolPropImportFailed', ...
             'Could not import CoolProp from %s: %s', vendor_dir, exception.message);
     end
-    coolprop = module;
+    initialized = true;
 end
