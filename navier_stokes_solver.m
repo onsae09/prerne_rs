@@ -1,12 +1,10 @@
-function result = navier_stokes_solver(C_p, T_initial)
-    %NAVIER_STOKES_SOLVER Initialize a 3-D thermo-fluid calculation.
-    % C_p is supplied by Python in J/(kg*K). It is used in the energy
-    % equation through k = mu*C_p/Pr and alpha = k/(rho*C_p).
-
+function result = navier_stokes_solver(T_initial)
     arguments
-        C_p (1,1) double {mustBeFinite, mustBePositive}
         T_initial (1,1) double {mustBeFinite, mustBePositive} = 300.0
     end
+
+    % NASA CEA dry-air polynomial을 MATLAB 안에서 직접 호출한다.
+    C_p = cp_air_nasa(T_initial); % J/(kg*K)
 
     % 초깃값
     dx = 0.1; dy = 0.1; dz = 0.1; dt = 0.01;
@@ -64,4 +62,31 @@ function result = navier_stokes_solver(C_p, T_initial)
         'alpha', mean(alpha, 'all'), ...
         'mean_temperature', mean(T, 'all'), ...
         'temperature', T);
+end
+
+function C_p = cp_air_nasa(T)
+    % NASA CEA thermo.inp의 고정 조성 건조 공기(Air) 계수.
+    % 유효 온도 범위는 300~6000 K이다.
+    if T < 300.0 || T > 6000.0
+        error('navier_stokes_solver:TemperatureOutOfRange', ...
+            'Temperature must be between 300 K and 6000 K.');
+    end
+
+    if T <= 1000.0
+        coefficients = [ ...
+            1.009950160e4, -1.968275610e2, 5.009155110, ...
+            -5.761013730e-3, 1.066859930e-5, ...
+            -7.940297970e-9, 2.185231910e-12];
+    else
+        coefficients = [ ...
+            2.415214430e5, -1.257874600e3, 5.144558670, ...
+            -2.138541790e-4, 7.065227840e-8, ...
+            -1.071483490e-11, 6.577800150e-16];
+    end
+
+    exponents = [-2, -1, 0, 1, 2, 3, 4];
+    molecular_weight = 28.9651159; % kg/kmol
+    R_universal = 8314.46261815324; % J/(kmol*K)
+    C_p = (R_universal / molecular_weight) * ...
+        sum(coefficients .* T.^exponents);
 end
