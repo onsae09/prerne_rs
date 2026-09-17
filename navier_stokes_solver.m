@@ -4,7 +4,8 @@ clear; clc; close all;
 dx = 0.1; dy = 0.1; dz = 0.1; dt = 0.01;
 Nx = 20; Ny = 20; Nz = 20; Nt = 100;
 Lx = dx*Nx; Ly = dy*Ny; Lz = dz*Nz; Lt = dt*Nt;
-x_grid = dx:dx:Lx; y_grid = dy:dy:Ly; z_grid = dz:dz:Lz; t = dt:dt:Lt;
+x_grid = -dx:dx:Lx; y_grid = -dy:dy:Ly; z_grid = -dz:dz:Lz; t = dt:dt:Lt;
+[X, Y, Z] = ndgrid(x_grid, y_grid, z_grid);
 
 % 상수
 R_u = 8.31446261815324; % J/(mol*K)
@@ -28,7 +29,6 @@ T_initial = 303.0; % K
 p_initial = 101325.0; % Pa
 
 % 변수 초기화
-r = [0 0 0];
 T = ones(Nx+2, Ny+2, Nz+2) * T_initial;
 p = ones(Nx+2, Ny+2, Nz+2) * p_initial;
 rho = p ./ (R .* T);
@@ -37,12 +37,29 @@ e = h - R .* T;
 E = rho .* (e + 0.5 .* sum(u.^2, 4));
 gamma = C_p ./ (C_p - R);
 mu = mu0 * (T / T0).^(3/2) .* (T0 + S) ./ (T + S);
-kappa = 0;
+kappa = zeros(Nx+2, Ny+2, Nz+2);
 lambda = kappa - 2/3 * mu;
-tau = mu .* (gradient(u, dx, dy, dz) + permute(gradient(u, dx, dy, dz), [1 2 3 5 4])) + lambda .* divergence(u, dx, dy, dz) .* eye(3);
-k = mu * C_p / Pr;
-q = -k * gradient(T, dx, dy, dz);
-g = -G * m * (r + r0) ./ vecnorm(r + r0, 2, 2).^3;
+[dudx, dudy, dudz] = gradient(u, dx, dy, dz, 1);
+J = cat(5, dudx, dudy, dudz);
+divu = dudx(:,:,:,1) + dudy(:,:,:,2) + dudz(:,:,:,3);
+I3 = reshape(eye(3), 1, 1, 1, 3, 3);
+tau = mu .* (J + permute(J, [1 2 3 5 4])) + lambda .* divu .* I3;
+k = mu .* C_p / Pr;
+q = -k .* gradient(T, dx, dy, dz);
+rx = X + r0(1);
+ry = Y + r0(2);
+rz = Z + r0(3);
+r_norm = sqrt(rx.^2 + ry.^2 + rz.^2);
+g = -G * m ./ r_norm.^3 .* cat(4, rx, ry, rz);
+
+for i = 1:Nt
+    [rho, u, E] = FDM(rho, u, E, p, tau, g, q, dx, dy, dz, dt);
+    [T, p]
+end
+
+function [rho, u, E] = FDM(rho, u, E, p, tau, g, q, dx, dy, dz, dt)
+    
+end
 
 function [A_air] = cal_A(x_species)
     % NASA 9 coefficients: N2, O2, Ar
