@@ -99,7 +99,14 @@ function coolprop_setup()
     end
 
     source_dir = fileparts(mfilename('fullpath'));
-    python_executable = fullfile(fileparts(source_dir), '.venv', 'bin', 'python');
+    
+    % 운영체제에 맞춰 가상환경 파이썬 실행 파일 경로 설정
+    if ispc
+        python_executable = fullfile(fileparts(source_dir), '.venv', 'Scripts', 'python.exe');
+    else
+        python_executable = fullfile(fileparts(source_dir), '.venv', 'bin', 'python');
+    end
+
     if ~isfile(python_executable)
         error('navier_stokes_solver:PythonMissing', ...
             'The project Python environment is missing: %s', python_executable);
