@@ -5,27 +5,26 @@ function navier_stokes_solver()
     Nx = 21; Ny = 21; Nz = 21; Nt = 101;
 
     % 상수
-    R_u = 8.31446261815324; %J/(mol*K) 일반기체상수
-    M = 0.0289647; %kg/mol 공기분자량
-    R = R_u/M; %J/(kg*K) 기체상수
-    mu0 = 1.716e-5; %Pa*s 점성계수
-    T0 = 273.15; %K 기준온도
-    S = 110.4; %K Sutherland 상수
-    Pr = 0.71; %프란틀 수
-    T_initial = 300; %K 초기온도
-    p = ones(Nx,Ny,Nz) * 101325; %Pa 초기압력
-    T = ones(Nx,Ny,Nz) * T_initial; %K 초기온도
-    rho = p./(R*T); %kg/m^3 초기밀도
-    C_p = C_p(T); %J/(kg*K) 비열
+    R_u = 8.31446261815324; % J/(mol*K) 일반기체상수
+    M = 0.0289647; % kg/mol 공기분자량
+    R = R_u/M; % J/(kg*K) 기체상수
+    mu0 = 1.716e-5; % Pa*s 점성계수
+    T0 = 273.15; % K 기준온도
+    S = 110.4; % K Sutherland 상수
+    Pr = 0.71; % 프란틀 수
+    T_initial = 300; % K 초기온도
 
-    % Sutherland 식으로 초기온도에서의 점성계수를 구한다.
-    mu = mu0 * (T_initial/T0)^(3/2) * (T0 + S)/(T_initial + S);
+    % 변수
+    p = ones(Nx,Ny,Nz) * 101325; % Pa 초기압력
+    T = ones(Nx,Ny,Nz) * T_initial; % K 초기온도
+    rho = p./(R*T); % kg/m^3 초기밀도
+    C_p = Cp(T); % J/(kg*K) 비열
+
+    mu = mu0 * (T/T0).^(3/2) * (T0 + S)./(T + S);
 end
 
-function C_p = C_p(T)
-    % NASA CEA thermo.inp의 고정 조성 건조 공기(Air) 계수.
-    % 유효 온도 범위는 300~6000 K이다.
-    if T < 300.0 || T > 6000.0
+function C_p = Cp(T)
+    if any(T < 300.0, "all") || any(T > 6000.0, "all")
         error('navier_stokes_solver:TemperatureOutOfRange', ...
             'Temperature must be between 300 K and 6000 K.');
     end
