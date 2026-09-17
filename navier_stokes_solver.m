@@ -23,7 +23,7 @@ p = ones(Nx, Ny, Nz) * p_initial;
 % Air properties
 % ============================================================
 
-properties = air_properties_fast(T, p);
+properties = air_properties(T, p);
 
 rho = properties.rho;   % kg/m^3
 C_p = properties.Cp;    % J/(kg*K)
@@ -36,7 +36,7 @@ Pr  = properties.Pr;    % dimensionless
 % Fast air property calculation
 % ============================================================
 
-function properties = air_properties_fast(T, P)
+function properties = air_properties(T, P)
 
     % --------------------------------------------------------
     % Input checks
