@@ -8,19 +8,21 @@ x_grid = -dx:dx:Lx; y_grid = -dy:dy:Ly; z_grid = -dz:dz:Lz; t = dt:dt:Lt;
 [X, Y, Z] = ndgrid(x_grid, y_grid, z_grid);
 
 % 상수
-mu0 = 1.716e-5; % Pa*s
+nu0 = 1.716e-5; % Pa*s
 T0 = 273.15; % K
 S = 110.4; % K
 Pr = 0.71;
+rho = 1.225; % kg/m^3
 
-G = 6.67430e-11; % m^3/(kg*s^2)
-m = 5.972e24; % kg
-r0 = [-Lx/2 6.371e6 -Lz/2];
-rx = X + r0(1);
-ry = Y + r0(2);
-rz = Z + r0(3);
-r_norm = sqrt(rx.^2 + ry.^2 + rz.^2);
-g = -G * m ./ r_norm.^3 .* cat(4, rx, ry, rz);
+%G = 6.67430e-11; % m^3/(kg*s^2)
+%m = 5.972e24; % kg
+%r0 = [-Lx/2 6.371e6 -Lz/2];
+%rx = X + r0(1);
+%ry = Y + r0(2);
+%rz = Z + r0(3);
+%r_norm = sqrt(rx.^2 + ry.^2 + rz.^2);
+%g = -G * m ./ r_norm.^3 .* cat(4, rx, ry, rz);
+g = [0, -9.81, 0]; % m/s^2
 
 x_species = [0.78084, 0.20946, 0.00934];
 x_species = x_species / sum(x_species);
@@ -30,47 +32,39 @@ A_air = cal_A(x_species);
 
 % 초기 설정값
 u = zeros(Nx+2, Ny+2, Nz+2, 3);
-T_initial = 303.0; % K
-p_initial = 101325.0; % Pa
+T = 303.15; % K
 
 % 변수 초기화
-T = ones(Nx+2, Ny+2, Nz+2) * T_initial;
-p = ones(Nx+2, Ny+2, Nz+2) * p_initial;
-rho = p ./ (R .* T);
+T = ones(Nx+2, Ny+2, Nz+2) * T;
+w = R .* T; % Pa*m^3/kg
 [C_p, h] = air_properties(T, A_air, R);
-e = h - R .* T;
-E = rho .* (e + 0.5 .* sum(u.^2, 4));
-[tau, q] = update(u, T, A_air, R, Pr, mu0, T0, S, dx, dy, dz, Nx, Ny, Nz);
+e = h - w;
+q = update(T, A_air, R, Pr, nu0, T0, S, dx, dy, dz);
 
 [T_table, e_table] = make_table_T(R, A_air);
 
 for i = 1:Nt
-    [rho2, u2, E2] = FDM(rho, rho .* u, u, E, p, tau, g, q, dx, dy, dz, dt, 1);
-    [T, p] = update_T_p(rho2, E2, u2, R, T_table, e_table, A_air);
-    [tau, q] = update(u2, T, A_air, R, Pr, mu0, T0, S, dx, dy, dz, Nx, Ny, Nz);
-    [rho3, u3, E3] = FDM(rho2, rho2 .* u2, u2, E2, p, tau, g, q, dx, dy, dz, dt, -1);
+    [rho2, u2, e2] = FDM(rho, rho .* u, u, e, w, tau, g, q, dx, dy, dz, dt, 1);
+    [T, w] = update_T_p(rho2, E2, u2, R, T_table, e_table, A_air);
+    q = update(u2, T, A_air, R, Pr, nu0, T0, S, dx, dy, dz, Nx, Ny, Nz);
+    [rho3, u3, e3] = FDM(rho2, rho2 .* u2, u2, e2, w, tau, g, q, dx, dy, dz, dt, -1);
     rho = 1/2 * (rho + rho3);
     u = 1/2 * (u + u3);
-    E = 1/2 * (E + E3);
-    [T, p] = update_T_p(rho, E, u, R, T_table, e_table, A_air);
-    [rho, u, T, p, E] = apply_bc(rho, u, T, p, A_air, R);
-    [tau, q] = update(u, T, A_air, R, Pr, mu0, T0, S, dx, dy, dz, Nx, Ny, Nz);
+    e = 1/2 * (e + e3);
+    [T, w] = update_T_p(rho, e, u, R, T_table, e_table, A_air);
+    [rho, u, T, w, e] = apply_bc(rho, u, T, w, A_air, R);
+    q = update(T, A_air, R, Pr, nu0, T0, S, dx, dy, dz);
 end
 
-function [rho2, u2, E2] = FDM(rho, rhou, u, E, p, tau, g, q, dx, dy, dz, dt, s)
-    rho2 = rho - dt * divergence(rhou, s, dx, dy, dz);
-    rhouu = reshape(rhou, size(rhou,1), size(rhou,2), size(rhou,3), 3, 1) .* reshape(u, size(u,1), size(u,2), size(u,3), 1, 3);
-    I3 = reshape(eye(3), 1, 1, 1, 3, 3);
-    flux = tau - rhouu - p.*I3;
+function [u2, e2] = FDM(rho, u, e, w, g, q, dx, dy, dz, dt, s)
+    flux = 
     u2 = 1./rho2 .* (rhou + dt * (divergence(flux, s, dx, dy, dz) + rho .* g));
-    u5 = reshape(u, size(u,1), size(u,2), size(u,3), 1, 3);   % (.,.,.,1,j)
-    tau_u = sum(tau .* u5, 5);                                 % (tau*u)_i = tau_{i,j} u_j
-    flux = (E + p) .* u - tau_u + q; 
-    E2 = E - dt * (divergence(flux, s, dx, dy, dz) +  rho .* sum(u .* g, 4));
+    u5 = reshape(u, size(u,1), size(u,2), size(u,3), 1, 3);                      % (tau*u)_i = tau_{i,j} u_j
+    flux = (E + w) .* u - tau_u + q; 
+    e2 = E - dt * (divergence(flux, s, dx, dy, dz) +  rho .* sum(u .* g, 4));
 end
 
-function [T, p] = update_T_p(rho, E, u, R, T_table, e_table, A_air)
-    e = E ./ rho - 0.5 .* sum(u.^2, 4);
+function [T, w] = update_T_p(rho, e, R, T_table, e_table, A_air)
     T =  interp1(e_table, T_table, e, 'linear');
     for iter = 1:3
         [C_p, h] = air_properties(T, A_air, R);
@@ -78,19 +72,13 @@ function [T, p] = update_T_p(rho, E, u, R, T_table, e_table, A_air)
         C_v = C_p - R;
         T = T - (e_ - e) ./ C_v;
     end
-    p = rho .* R .* T;
+    w = rho .* R .* T;
 end
 
-function [tau, q] = update(u, T, A_air, R, Pr, mu0, T0, S, dx, dy, dz, Nx, Ny, Nz)
+function q = update(T, A_air, R, Pr, nu0, T0, S, dx, dy, dz)
     [C_p, ~] = air_properties(T, A_air, R);
-    mu = mu0 * (T / T0).^(3/2) .* (T0 + S) ./ (T + S);
-    kappa = zeros(Nx+2, Ny+2, Nz+2);
-    lambda = kappa - 2/3 * mu;
-    J = grad(u, dx, dy, dz);
-    divu = J(:,:,:,1,1) + J(:,:,:,2,2) + J(:,:,:,3,3);
-    I3 = reshape(eye(3), 1, 1, 1, 3, 3);
-    tau = mu .* (J + permute(J, [1 2 3 5 4])) + lambda .* divu .* I3;
-    k = mu .* C_p / Pr;
+    nu = nu0 * (T / T0).^(3/2) .* (T0 + S) ./ (T + S);
+    k = nu .* C_p / Pr;
     q = -k .* grad(T, dx, dy, dz);
 end
 
@@ -181,27 +169,27 @@ function D = oneSidedDiff1(A, k, s, h)
     D = D / h;
 end
 
-function [rho, u, T, p, E] = apply_bc(rho, u, T, p, A_air, R)
+function [rho, u, T, w, E] = apply_bc(rho, u, T, w, A_air, R)
     % 격자: 1번째/끝 인덱스가 고스트층. y가 커지는 방향이 고도(위쪽).
-    % 바닥(y=1) : 고정벽, no-slip     -> 속도 반사(u=0 @ 벽면), T/rho/p는 단열(zero-gradient)
+    % 바닥(y=1) : 고정벽, no-slip     -> 속도 반사(u=0 @ 벽면), T/rho/w는 단열(zero-gradient)
     % 나머지 5면(x 양끝, y=끝(위), z 양끝) : 자유유출(zero-gradient, 안쪽 값 복제)
  
     % --- 자유유출: x 양끝 ---
-    u(1,:,:,:)   = u(2,:,:,:);     T(1,:,:)   = T(2,:,:);     rho(1,:,:)   = rho(2,:,:);     p(1,:,:)   = p(2,:,:);
-    u(end,:,:,:) = u(end-1,:,:,:); T(end,:,:) = T(end-1,:,:); rho(end,:,:) = rho(end-1,:,:); p(end,:,:) = p(end-1,:,:);
+    u(1,:,:,:)   = u(2,:,:,:);     T(1,:,:)   = T(2,:,:);     rho(1,:,:)   = rho(2,:,:);     w(1,:,:)   = w(2,:,:);
+    u(end,:,:,:) = u(end-1,:,:,:); T(end,:,:) = T(end-1,:,:); rho(end,:,:) = rho(end-1,:,:); w(end,:,:) = w(end-1,:,:);
  
     % --- 자유유출: z 양끝 ---
-    u(:,:,1,:)   = u(:,:,2,:);     T(:,:,1)   = T(:,:,2);     rho(:,:,1)   = rho(:,:,2);     p(:,:,1)   = p(:,:,2);
-    u(:,:,end,:) = u(:,:,end-1,:); T(:,:,end) = T(:,:,end-1); rho(:,:,end) = rho(:,:,end-1); p(:,:,end) = p(:,:,end-1);
+    u(:,:,1,:)   = u(:,:,2,:);     T(:,:,1)   = T(:,:,2);     rho(:,:,1)   = rho(:,:,2);     w(:,:,1)   = w(:,:,2);
+    u(:,:,end,:) = u(:,:,end-1,:); T(:,:,end) = T(:,:,end-1); rho(:,:,end) = rho(:,:,end-1); w(:,:,end) = w(:,:,end-1);
  
     % --- 자유유출: y 위쪽 끝 ---
-    u(:,end,:,:) = u(:,end-1,:,:); T(:,end,:)  = T(:,end-1,:); rho(:,end,:) = rho(:,end-1,:); p(:,end,:) = p(:,end-1,:);
+    u(:,end,:,:) = u(:,end-1,:,:); T(:,end,:)  = T(:,end-1,:); rho(:,end,:) = rho(:,end-1,:); w(:,end,:) = w(:,end-1,:);
  
     % --- 바닥(y=1) : no-slip 고정벽 ---
     u(:,1,:,:) = -u(:,2,:,:);      % 벽면에서 속도(법선+접선 모두)가 0이 되도록 반사
     T(:,1,:)   = T(:,2,:);         % 단열벽 (zero-gradient)
     rho(:,1,:) = rho(:,2,:);       % 압력/밀도는 법선방향 zero-gradient
-    p(:,1,:)   = p(:,2,:);
+    w(:,1,:)   = w(:,2,:);
  
     % 강제로 맞춘 T,rho,u와 일관되도록 E 재계산
     [~, h] = air_properties(T, A_air, R);
