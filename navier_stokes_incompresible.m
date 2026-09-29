@@ -8,7 +8,7 @@ x_grid = -dx:dx:Lx; y_grid = -dy:dy:Ly; z_grid = -dz:dz:Lz; t = dt:dt:Lt;
 [X, Y, Z] = ndgrid(x_grid, y_grid, z_grid);
 
 % 상수
-nu0 = 1.716e-5; 
+nu = 1.716e-5; 
 T0 = 273.15; % K
 S = 110.4; % K
 rho = 1.225; % kg/m^3
@@ -21,8 +21,23 @@ rho = 1.225; % kg/m^3
 %rz = Z + r0(3);
 %r_norm = sqrt(rx.^2 + ry.^2 + rz.^2);
 %g = -G * m ./ r_norm.^3 .* cat(4, rx, ry, rz);
-g = [0, -9.81, 0]; % m/s^2
+g = reshape([0, -9.81, 0], [1,1,1,3]);
 
+ex = ones(Nx,1);
+ey = ones(Ny,1);
+ez = ones(Nz,1);
+
+Tx = spdiags([-ex, 2*ex, -ex], -1:1, Nx, Nx);
+Ty = spdiags([-ey, 2*ey, -ey], -1:1, Ny, Ny);
+Tz = spdiags([-ez, 2*ez, -ez], -1:1, Nz, Nz);
+
+Ix = speye(Nx);
+Iy = speye(Ny);
+Iz = speye(Nz);
+
+A = kron(Iz, kron(Iy, Tx)) ...
+  + kron(Iz, kron(Ty, Ix)) ...
+  + kron(Tz, kron(Iy, Ix));
 
 R = 287.107; % J/(kg*K)
 
@@ -33,133 +48,131 @@ T = 303.15; % K
 % 변수 초기화
 T = ones(Nx+2, Ny+2, Nz+2) * T;
 w = R .* T; % Pa*m^3/kg
-e = h - w;
-q = update(T, A_air, R, Pr, nu0, T0, S, dx, dy, dz);
 
-[T_table, e_table] = make_table_T(R, A_air);
-
-for i = 1:Nt
-    [rho2, u2, e2] = FDM(rho, rho .* u, u, e, w, tau, g, q, dx, dy, dz, dt, 1);
-    [T, w] = update_T_p(rho2, E2, u2, R, T_table, e_table, A_air);
-    q = update(u2, T, A_air, R, Pr, nu0, T0, S, dx, dy, dz, Nx, Ny, Nz);
-    [rho3, u3, e3] = FDM(rho2, rho2 .* u2, u2, e2, w, tau, g, q, dx, dy, dz, dt, -1);
-    rho = 1/2 * (rho + rho3);
-    u = 1/2 * (u + u3);
-    e = 1/2 * (e + e3);
-    [T, w] = update_T_p(rho, e, u, R, T_table, e_table, A_air);
-    [rho, u, T, w, e] = apply_bc(rho, u, T, w, A_air, R);
-    q = update(T, A_air, R, Pr, nu0, T0, S, dx, dy, dz);
+for i = 1:1
+    [u, w] = FDM(u, w, nu, g, dx, dy, dz, dt, A);
 end
 
-function [u2, e2] = FDM(rho, u, e, w, g, q, dx, dy, dz, dt, s)
-    flux = 
-    u2 = 1./rho2 .* (rhou + dt * (divergence(flux, s, dx, dy, dz) + rho .* g));
-    u5 = reshape(u, size(u,1), size(u,2), size(u,3), 1, 3);                      % (tau*u)_i = tau_{i,j} u_j
-    flux = 
-    e2 = e - dt * (divergence(flux, s, dx, dy, dz) +  rho .* sum(u .* g, 4));
+function [u2, w2] = FDM(u, w, nu, g, dx, dy, dz, dt, A)
+    duu = (-uu(u, dx, dy, dz) - G(w, dx, dy, dz) + nu .* L(u, dx, dy, dz) + g) * dt;
+    du = zeros(size(u),"like",u);
+    du(2:end-1,2:end-1,2:end-1,:) = duu;
+    u2 = u + du;
+    size(u2)
+    [u2, ~] = bc(u2, w);
+    f = D(u2, dx, dy, dz)/dt;
+    phi = reshape(A \ -f(:), size(f));
+    p = zeros(size(w),"like",w);
+    p(2:end-1,2:end-1,2:end-1) = phi;
+    u2(2:end-1,2:end-1,2:end-1,:) = u2(2:end-1,2:end-1,2:end-1,:) - G(p, dx, dy, dz);
+    w2 = w + p;
+    [u2, w2] = bc(u2, w2);
 end
 
-function [T, w] = update_T_p(rho, e, R, T_table, e_table, A_air)
-    T =  interp1(e_table, T_table, e, 'linear');
-    for iter = 1:3
-        [C_p, h] = air_properties(T, A_air, R);
-        e_ = h - R .* T;
-        C_v = C_p - R;
-        T = T - (e_ - e) ./ C_v;
-    end
-    w = rho .* R .* T;
-end
+function out = G(A, dx, dy, dz)
+    % 스칼라 -> gradient: [Nx,Ny,Nz,3]
+    % 벡터 -> Jacobian: [Nx,Ny,Nz,3,3]
+    % 벡터의 경우 out(:,:,:,i,j) = dA_i/dx_j
 
-function q = update(T, A_air, R, Pr, nu0, T0, S, dx, dy, dz)
-    [C_p, ~] = air_properties(T, A_air, R);
-    nu = nu0 * (T / T0).^(3/2) .* (T0 + S) ./ (T + S);
-    k = nu .* C_p / Pr;
-    q = -k .* grad(T, dx, dy, dz);
-end
+    h = [dx, dy, dz];
+    n = [size(A,1)-2, size(A,2)-2, size(A,3)-2];
+    nc = size(A,4);
+    assert(nc == 1 || nc == 3);
 
-function G = grad(A, dx, dy, dz)
-    hs = [dx dy dz];
-    d = ndims(A);
-    G = zeros([size(A) 3]);
-    idxOut = repmat({':'}, 1, d+1);
-    for k = 1:3
-        idxOut{d+1} = k;
-        G(idxOut{:}) = centralDiff1(A, k, hs(k));
+    if nc == 1
+        out = zeros([n, 3], 'like', A);
+        for j = 1:3
+            out(:,:,:,j) = fd1(A, h(j), j);
+        end
+    else
+        out = zeros([n, 3, 3], 'like', A);
+        for i = 1:3
+            for j = 1:3
+                out(:,:,:,i,j) = fd1(A(:,:,:,i), h(j), j);
+            end
+        end
     end
 end
 
-function div = divergence(A, s, dx, dy, dz)
-    assert(ndims(A) >= 4, 'divergence3: 4번째 차원이 성분축이어야 합니다.');
-    hs = [dx dy dz];
-    sz = size(A); sz(4) = [];
-    idx = repmat({':'}, 1, ndims(A));
-    div = zeros([sz 1]);
-    for k = 1:3
-        idx{4} = k;                                          % k번째 성분만
-        Ak = reshape(A(idx{:}), [sz 1]);                      % 성분축 제거
-        div = div + oneSidedDiff1(Ak, k, s, hs(k));           % k방향으로 미분
-    end
-end
-function D = centralDiff1(A, k, h)
-    d = ndims(A);
-    n = size(A, k);
-    D = zeros(size(A));
- 
-    im1 = repmat({':'}, 1, d); im1{k} = 1:n-2;    % i-1
-    ip1 = im1;                 ip1{k} = 3:n;      % i+1
-    ic  = im1;                 ic{k}  = 2:n-1;    % 내부(i)
-    D(ic{:}) = (A(ip1{:}) - A(im1{:})) / (2*h);
- 
-    i0 = repmat({':'}, 1, d); i0{k} = 1;
-    i1 = i0; i1{k} = 2;
-    i2 = i0; i2{k} = 3;
-    D(i0{:}) = (-3*A(i0{:}) + 4*A(i1{:}) - A(i2{:})) / (2*h);   % 앞쪽 경계
- 
-    jN  = repmat({':'}, 1, d); jN{k}  = n;
-    jN1 = jN; jN1{k} = n-1;
-    jN2 = jN; jN2{k} = n-2;
-    D(jN{:}) = (3*A(jN{:}) - 4*A(jN1{:}) + A(jN2{:})) / (2*h);  % 뒤쪽 경계
+function out = D(A, dx, dy, dz)
+    % 3성분 벡터 -> divergence 스칼라: [Nx,Ny,Nz]
+
+    out = fd1(A(:,:,:,1), dx, 1) ...
+        + fd1(A(:,:,:,2), dy, 2) ...
+        + fd1(A(:,:,:,3), dz, 3);
 end
 
-function D = oneSidedDiff1(A, k, s, h)
-    d = ndims(A);
-    n = size(A, k);
-    diffk = diff(A, 1, k);
-    id = repmat({':'}, 1, d);
-    if s > 0                                      % 후진차분: D(i)=A(i)-A(i-1)
-        id{k} = 1;
-        D = cat(k, diffk(id{:}), diffk);
-    else                                           % 전진차분: D(i)=A(i+1)-A(i)
-        id{k} = n-1;
-        D = cat(k, diffk, diffk(id{:}));
+function out = L(A, dx, dy, dz)
+    % 스칼라 또는 3성분 벡터 -> 성분별 Laplacian
+
+    h = [dx, dy, dz];
+    n = [size(A,1)-2, size(A,2)-2, size(A,3)-2];
+    nc = size(A,4);
+    assert(nc == 1 || nc == 3);
+
+    out = zeros([n, nc], 'like', A);
+    for i = 1:nc
+        Ai = A(:,:,:,i);
+        for j = 1:3
+            out(:,:,:,i) = out(:,:,:,i) + fd2(Ai, h(j), j);
+        end
     end
-    D = D / h;
+
+    if nc == 1
+        out = reshape(out, n);
+    end
 end
 
-function [rho, u, T, w, E] = apply_bc(rho, u, T, w, A_air, R)
+function out = fd1(A, h, dim)
+    % 물리 셀의 1차 중앙차분
+    c = {2:size(A,1)-1, 2:size(A,2)-1, 2:size(A,3)-1};
+    p = c; m = c;
+    p{dim} = p{dim}+1;
+    m{dim} = m{dim}-1;
+    out = (A(p{:}) - A(m{:})) / (2*h);
+end
+
+function out = fd2(A, h, dim)
+    % 물리 셀의 2차 중앙차분
+    c = {2:size(A,1)-1, 2:size(A,2)-1, 2:size(A,3)-1};
+    p = c; m = c;
+    p{dim} = p{dim}+1;
+    m{dim} = m{dim}-1;
+    out = (A(p{:}) - 2*A(c{:}) + A(m{:})) / h^2;
+end
+
+function out = uu(u, dx, dy, dz)
+    % out = ∇·[(u·∇)u], 비압축성 유동
+    % G(:,:,:,i,j) = ∂u_i/∂x_j
+
+    J = G(u, dx, dy, dz);
+
+    n = [size(u,1)-2, size(u,2)-2, size(u,3)-2];
+    out = zeros(n, 'like', u);
+
+    for i = 1:3
+        for j = 1:3
+            out = out + J(:,:,:,i,j) .* J(:,:,:,j,i);
+        end
+    end
+end
+
+function [u, w] = bc(u, w)
     % 격자: 1번째/끝 인덱스가 고스트층. y가 커지는 방향이 고도(위쪽).
     % 바닥(y=1) : 고정벽, no-slip     -> 속도 반사(u=0 @ 벽면), T/rho/w는 단열(zero-gradient)
     % 나머지 5면(x 양끝, y=끝(위), z 양끝) : 자유유출(zero-gradient, 안쪽 값 복제)
  
     % --- 자유유출: x 양끝 ---
-    u(1,:,:,:)   = u(2,:,:,:);     T(1,:,:)   = T(2,:,:);     rho(1,:,:)   = rho(2,:,:);     w(1,:,:)   = w(2,:,:);
-    u(end,:,:,:) = u(end-1,:,:,:); T(end,:,:) = T(end-1,:,:); rho(end,:,:) = rho(end-1,:,:); w(end,:,:) = w(end-1,:,:);
+    u(1,:,:,:)   = u(2,:,:,:);     w(1,:,:)   = w(2,:,:);
+    u(end,:,:,:) = u(end-1,:,:,:); w(end,:,:) = w(end-1,:,:);
  
     % --- 자유유출: z 양끝 ---
-    u(:,:,1,:)   = u(:,:,2,:);     T(:,:,1)   = T(:,:,2);     rho(:,:,1)   = rho(:,:,2);     w(:,:,1)   = w(:,:,2);
-    u(:,:,end,:) = u(:,:,end-1,:); T(:,:,end) = T(:,:,end-1); rho(:,:,end) = rho(:,:,end-1); w(:,:,end) = w(:,:,end-1);
+    u(:,:,1,:)   = u(:,:,2,:);     w(:,:,1)   = w(:,:,2);
+    u(:,:,end,:) = u(:,:,end-1,:); w(:,:,end) = w(:,:,end-1);
  
     % --- 자유유출: y 위쪽 끝 ---
-    u(:,end,:,:) = u(:,end-1,:,:); T(:,end,:)  = T(:,end-1,:); rho(:,end,:) = rho(:,end-1,:); w(:,end,:) = w(:,end-1,:);
+    u(:,end,:,:) = u(:,end-1,:,:); w(:,end,:) = w(:,end-1,:);
  
     % --- 바닥(y=1) : no-slip 고정벽 ---
-    u(:,1,:,:) = -u(:,2,:,:);      % 벽면에서 속도(법선+접선 모두)가 0이 되도록 반사
-    T(:,1,:)   = T(:,2,:);         % 단열벽 (zero-gradient)
-    rho(:,1,:) = rho(:,2,:);       % 압력/밀도는 법선방향 zero-gradient
-    w(:,1,:)   = w(:,2,:);
- 
-    % 강제로 맞춘 T,rho,u와 일관되도록 E 재계산
-    [~, h] = air_properties(T, A_air, R);
-    e = h - R .* T;
-    E = rho .* (e + 0.5 .* sum(u.^2, 4));
+    u(:,1,:,:) = -u(:,2,:,:);      w(:,1,:)   = w(:,2,:);
 end
