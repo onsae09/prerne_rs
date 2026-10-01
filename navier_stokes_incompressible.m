@@ -1,9 +1,7 @@
-clear; clc; close all;
-
-
+clear; close all;
 
 % 유한차분
-dx = 0.1; dy = 0.1; dz = 0.1; dt = 1e-2;
+dx = 10e-4; dy = 10e-4; dz = 10e-4; dt = 1e-2;
 Nx = 1e2; Ny = 1e2; Nz = 1e2; Nt = 1e1;
 Lx = dx*Nx; Ly = dy*Ny; Lz = dz*Nz; Lt = dt*Nt;
 x_grid = -dx:dx:Lx; y_grid = -dy:dy:Ly; z_grid = -dz:dz:Lz; t = dt:dt:Lt;
@@ -30,25 +28,55 @@ ex = ones(Nx,1);
 ey = ones(Ny,1);
 ez = ones(Nz,1);
 
-Tx = spdiags([-ex, 2*ex, -ex], -1:1, Nx, Nx);
-Ty = spdiags([-ey, 2*ey, -ey], -1:1, Ny, Ny);
-Tz = spdiags([-ez, 2*ez, -ez], -1:1, Nz, Nz);
+Tx = spdiags([-ex, 2*ex, -ex], -1:1, Nx, Nx)/dx^2;
+Ty = spdiags([-ey, 2*ey, -ey], -1:1, Ny, Ny)/dy^2;
+Tz = spdiags([-ez, 2*ez, -ez], -1:1, Nz, Nz)/dz^2;
+
+% x 양면: phi = 0
+Tx(1,1)     = 3/dx^2;
+Tx(end,end) = 3/dx^2;
+
+% y 아래: dphi/dn = 0
+Ty(1,1) = 1/dy^2;
+
+% y 위: phi = 0
+Ty(end,end) = 3/dy^2;
+
+% z 양면: phi = 0
+Tz(1,1)     = 3/dz^2;
+Tz(end,end) = 3/dz^2;
 
 Ix = speye(Nx);
 Iy = speye(Ny);
 Iz = speye(Nz);
 
-A = kron(Iz, kron(Iy, Tz)) ...
+A = kron(Iz, kron(Iy, Tx)) ...
   + kron(Iz, kron(Ty, Ix)) ...
   + kron(Tz, kron(Iy, Ix));
 
-[R, flag, p] = chol(A, 'vector');
-assert(flag == 0);
-save('cholesky.mat', 'R', 'p', '-v7.3')
+s = whos("A").bytes/2^30
+
 tic
+A = decomposition(A, 'chol');
+s = whos("A").bytes/2^30
+elapsed = toc
+
 %{
+tic
+A = chol(A);
+elapsed = toc
+s = whos("A").bytes/2^30
+tic
+save('cholesky.mat', 'A', '-v7.3')
+elapsed = toc
+
+%}
+%{
+tic
+
 A = matfile("cholesky.mat").A;
 elapsed = toc
+%}
 R = 287.107; % J/(kg*K)
 
 % 초기 설정값
@@ -63,7 +91,8 @@ U = zeros([Nt,size(u)]);
 W = zeros([Nt,size(w)]);
 for i = 1:1
     [u, w] = FDM(u, w, nu, g, dx, dy, dz, dt, A);
-    U(:,:,:,:,i) = u;
+    U(i,:,:,:,:) = u;
+    W(i,:,:,:) = w;
 end
 
 function [u2, w2] = FDM(u, w, nu, g, dx, dy, dz, dt, A)
@@ -74,11 +103,12 @@ function [u2, w2] = FDM(u, w, nu, g, dx, dy, dz, dt, A)
     u2 = u + du;
     [u2, ~] = bc(u2, w);
     f = D(u2, dx, dy, dz)/dt;
-    phi = reshape(A \ -f(:), size(f));
-    p = zeros(size(w),"like",w);
-    p(2:end-1,2:end-1,2:end-1) = phi;
-    u2(2:end-1,2:end-1,2:end-1,:) = u2(2:end-1,2:end-1,2:end-1,:) - G(p, dx, dy, dz);
-    w2 = w + p;
+    p = reshape(A \ -f(:), size(f));
+    phi = zeros(size(w),"like",w);
+    phi(2:end-1,2:end-1,2:end-1) = p;
+    phi = phi_bc(phi);
+    u2(2:end-1,2:end-1,2:end-1,:) = u2(2:end-1,2:end-1,2:end-1,:) - dt * G(phi, dx, dy, dz);
+    w2 = w + phi;
     [u2, w2] = bc(u2, w2);
     elapsed = toc
 end
@@ -180,4 +210,19 @@ function [u, w] = bc(u, w)
     % --- 바닥(y=1) : no-slip 고정벽 ---
     u(:,1,:,:) = -u(:,2,:,:);      w(:,1,:)   = w(:,2,:);
 end
-%}
+function phi = phi_bc(phi)
+
+    % x 양면: 실제 경계면에서 phi=0
+    phi(1,:,:)   = -phi(2,:,:);
+    phi(end,:,:) = -phi(end-1,:,:);
+
+    % z 양면: 실제 경계면에서 phi=0
+    phi(:,:,1)   = -phi(:,:,2);
+    phi(:,:,end) = -phi(:,:,end-1);
+
+    % y 위: 실제 경계면에서 phi=0
+    phi(:,end,:) = -phi(:,end-1,:);
+
+    % y 아래 고체벽: dphi/dn=0
+    phi(:,1,:) = phi(:,2,:);
+end
