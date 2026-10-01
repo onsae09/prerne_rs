@@ -1,6 +1,6 @@
 clear; clc; close all;
 
-tic
+
 
 % 유한차분
 dx = 0.1; dy = 0.1; dz = 0.1; dt = 1e-2;
@@ -25,6 +25,7 @@ rho = 1.225; % kg/m^3
 %g = -G * m ./ r_norm.^3 .* cat(4, rx, ry, rz);
 g = reshape([0, -9.81, 0], [1,1,1,3]);
 
+
 ex = ones(Nx,1);
 ey = ones(Ny,1);
 ez = ones(Nz,1);
@@ -37,12 +38,16 @@ Ix = speye(Nx);
 Iy = speye(Ny);
 Iz = speye(Nz);
 
-A = kron(Iz, kron(Iy, Tx)) ...
+A = kron(Iz, kron(Iy, Tz)) ...
   + kron(Iz, kron(Ty, Ix)) ...
   + kron(Tz, kron(Iy, Ix));
-elapsed = toc
+
+[R, flag, p] = chol(A, 'vector');
+assert(flag == 0);
+save('cholesky.mat', 'R', 'p', '-v7.3')
 tic
-A = decomposition(A,"chol");
+%{
+A = matfile("cholesky.mat").A;
 elapsed = toc
 R = 287.107; % J/(kg*K)
 
@@ -56,7 +61,7 @@ w = R .* T; % Pa*m^3/kg
 
 U = zeros([Nt,size(u)]);
 W = zeros([Nt,size(w)]);
-for i = 1:Nt
+for i = 1:1
     [u, w] = FDM(u, w, nu, g, dx, dy, dz, dt, A);
     U(:,:,:,:,i) = u;
 end
@@ -75,7 +80,7 @@ function [u2, w2] = FDM(u, w, nu, g, dx, dy, dz, dt, A)
     u2(2:end-1,2:end-1,2:end-1,:) = u2(2:end-1,2:end-1,2:end-1,:) - G(p, dx, dy, dz);
     w2 = w + p;
     [u2, w2] = bc(u2, w2);
-    toc
+    elapsed = toc
 end
 
 function out = G(A, dx, dy, dz)
@@ -175,3 +180,4 @@ function [u, w] = bc(u, w)
     % --- 바닥(y=1) : no-slip 고정벽 ---
     u(:,1,:,:) = -u(:,2,:,:);      w(:,1,:)   = w(:,2,:);
 end
+%}
