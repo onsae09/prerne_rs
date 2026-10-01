@@ -1,8 +1,10 @@
 clear; clc; close all;
 
+tic
+
 % 유한차분
-dx = 0.1; dy = 0.1; dz = 0.1; dt = 1e-5;
-Nx = 1e2; Ny = 1e2; Nz = 1e2; Nt = 1e3;
+dx = 0.1; dy = 0.1; dz = 0.1; dt = 1e-2;
+Nx = 1e2; Ny = 1e2; Nz = 1e2; Nt = 1e1;
 Lx = dx*Nx; Ly = dy*Ny; Lz = dz*Nz; Lt = dt*Nt;
 x_grid = -dx:dx:Lx; y_grid = -dy:dy:Ly; z_grid = -dz:dz:Lz; t = dt:dt:Lt;
 [X, Y, Z] = ndgrid(x_grid, y_grid, z_grid);
@@ -38,7 +40,10 @@ Iz = speye(Nz);
 A = kron(Iz, kron(Iy, Tx)) ...
   + kron(Iz, kron(Ty, Ix)) ...
   + kron(Tz, kron(Iy, Ix));
-
+elapsed = toc
+tic
+A = decomposition(A,"chol");
+elapsed = toc
 R = 287.107; % J/(kg*K)
 
 % 초기 설정값
@@ -49,16 +54,19 @@ T = 303.15; % K
 T = ones(Nx+2, Ny+2, Nz+2) * T;
 w = R .* T; % Pa*m^3/kg
 
-for i = 1:1
+U = zeros([Nt,size(u)]);
+W = zeros([Nt,size(w)]);
+for i = 1:Nt
     [u, w] = FDM(u, w, nu, g, dx, dy, dz, dt, A);
+    U(:,:,:,:,i) = u;
 end
 
 function [u2, w2] = FDM(u, w, nu, g, dx, dy, dz, dt, A)
+    tic
     duu = (-uu(u, dx, dy, dz) - G(w, dx, dy, dz) + nu .* L(u, dx, dy, dz) + g) * dt;
     du = zeros(size(u),"like",u);
     du(2:end-1,2:end-1,2:end-1,:) = duu;
     u2 = u + du;
-    size(u2)
     [u2, ~] = bc(u2, w);
     f = D(u2, dx, dy, dz)/dt;
     phi = reshape(A \ -f(:), size(f));
@@ -67,13 +75,10 @@ function [u2, w2] = FDM(u, w, nu, g, dx, dy, dz, dt, A)
     u2(2:end-1,2:end-1,2:end-1,:) = u2(2:end-1,2:end-1,2:end-1,:) - G(p, dx, dy, dz);
     w2 = w + p;
     [u2, w2] = bc(u2, w2);
+    toc
 end
 
 function out = G(A, dx, dy, dz)
-    % 스칼라 -> gradient: [Nx,Ny,Nz,3]
-    % 벡터 -> Jacobian: [Nx,Ny,Nz,3,3]
-    % 벡터의 경우 out(:,:,:,i,j) = dA_i/dx_j
-
     h = [dx, dy, dz];
     n = [size(A,1)-2, size(A,2)-2, size(A,3)-2];
     nc = size(A,4);
@@ -95,16 +100,12 @@ function out = G(A, dx, dy, dz)
 end
 
 function out = D(A, dx, dy, dz)
-    % 3성분 벡터 -> divergence 스칼라: [Nx,Ny,Nz]
-
     out = fd1(A(:,:,:,1), dx, 1) ...
         + fd1(A(:,:,:,2), dy, 2) ...
         + fd1(A(:,:,:,3), dz, 3);
 end
 
 function out = L(A, dx, dy, dz)
-    % 스칼라 또는 3성분 벡터 -> 성분별 Laplacian
-
     h = [dx, dy, dz];
     n = [size(A,1)-2, size(A,2)-2, size(A,3)-2];
     nc = size(A,4);
@@ -143,8 +144,6 @@ end
 
 function out = uu(u, dx, dy, dz)
     % out = ∇·[(u·∇)u], 비압축성 유동
-    % G(:,:,:,i,j) = ∂u_i/∂x_j
-
     J = G(u, dx, dy, dz);
 
     n = [size(u,1)-2, size(u,2)-2, size(u,3)-2];
