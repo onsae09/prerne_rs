@@ -1,37 +1,25 @@
 clear; close all;
 
 % 유한차분
-dx = 10e-4; dy = 10e-4; dz = 10e-4; dt = 1e-2;
-Nx = 1e2; Ny = 1e2; Nz = 1e2; Nt = 1e1;
-Lx = dx*Nx; Ly = dy*Ny; Lz = dz*Nz; Lt = dt*Nt;
-x_grid = -dx:dx:Lx; y_grid = -dy:dy:Ly; z_grid = -dz:dz:Lz; t = dt:dt:Lt;
-[X, Y, Z] = ndgrid(x_grid, y_grid, z_grid);
+% (b,r,xi,eta)
+% b ∈ [1:6], -1 <= xi <= 1, -1 <= eta <= 1
+db = 1; dr = 1e-3; dxi = 2e-2; deta = 2e-2; dt = 1e-2;
+Nb = 6; Nr = 1e2; Nxi = 2/dxi; Neta = 2/deta; Nt = 1e1;
+b = [1:db:db*Nb]; r = [2e-2:dr:dr*Nr]; xi = [-1:dxi:1]; eta = [-1:deta:1]; t = dt:dt:dt*Nt;
+%[B, R, XI, ETA] = ndgrid(b, r, xi, eta);
 
 % 상수
-mu = 1.716e-5; 
-T0 = 273.15; % K
-S = 110.4; % K
-rho = 1.225; % kg/m^3
-nu = mu/rho; % m^2/s
+nu = 1.56e-5; % m^2/s
+g = [0, -9.81, 0]; % m/s^2
 
-%G = 6.67430e-11; % m^3/(kg*s^2)
-%m = 5.972e24; % kg
-%r0 = [-Lx/2 6.371e6 -Lz/2];
-%rx = X + r0(1);
-%ry = Y + r0(2);
-%rz = Z + r0(3);
-%r_norm = sqrt(rx.^2 + ry.^2 + rz.^2);
-%g = -G * m ./ r_norm.^3 .* cat(4, rx, ry, rz);
-g = reshape([0, -9.81, 0], [1,1,1,3]);
+%{
+ex = ones(size(XI),1);
+ey = ones(size(ETA),1);
+ez = ones(size(ETA),1);
 
-
-ex = ones(Nx,1);
-ey = ones(Ny,1);
-ez = ones(Nz,1);
-
-Tx = spdiags([-ex, 2*ex, -ex], -1:1, Nx, Nx)/dx^2;
-Ty = spdiags([-ey, 2*ey, -ey], -1:1, Ny, Ny)/dy^2;
-Tz = spdiags([-ez, 2*ez, -ez], -1:1, Nz, Nz)/dz^2;
+Tx = spdiags([-ex, 2*ex, -ex], -1:1, size(XI,1), size(XI,1))/dx^2;
+Ty = spdiags([-ey, 2*ey, -ey], -1:1, size(ETA,1), size(ETA,1))/dy^2;
+Tz = spdiags([-ez, 2*ez, -ez], -1:1, size(ETA,1), size(ETA,1))/dz^2;
 
 % x 양면: phi = 0
 Tx(1,1)     = 3/dx^2;
@@ -47,9 +35,9 @@ Ty(end,end) = 3/dy^2;
 Tz(1,1)     = 3/dz^2;
 Tz(end,end) = 3/dz^2;
 
-Ix = speye(Nx);
-Iy = speye(Ny);
-Iz = speye(Nz);
+Ix = speye(size(XI,1));
+Iy = speye(size(ETA,1));
+Iz = speye(size(ETA,1));
 
 A = kron(Iz, kron(Iy, Tx)) ...
   + kron(Iz, kron(Ty, Ix)) ...
@@ -60,7 +48,6 @@ A = decomposition(A, 'chol')
 s = whos("A").bytes/2^30
 elapsed = toc
 
-%{
 tic
 A = chol(A);
 elapsed = toc
@@ -70,24 +57,17 @@ save('cholesky.mat', 'A', '-v7.3')
 elapsed = toc
 
 %}
-%{
-tic
-
-A = matfile("cholesky.mat").A;
-elapsed = toc
-%}
 
 R = 287.107; % J/(kg*K)
 
 % 초기 설정값
-u = zeros(Nx+2, Ny+2, Nz+2);
-v = zeros(Nx+2, Ny+2, Nz+2);
-w = zeros(Nx+2, Ny+2, Nz+2);
-T = 303.15; % K
+u.r = zeros(Nb, Nr+3, Nxi, Neta);
+u.xi = zeros(Nb, Nr+3, Nxi, Neta);
+u.eta = zeros(Nb, Nr+3, Nxi, Neta);
+T = 293.15; % K
 
 % 변수 초기화
-T = ones(Nx+2, Ny+2, Nz+2) * T;
-w = R .* T; % Pa*m^3/kg
+w = ones(Nb, Nr+2, Nxi, Neta) .* R .* T; % Pa*m^3/kg
 
 U = zeros([Nt,size(u)]);
 W = zeros([Nt,size(w)]);
